@@ -115,12 +115,22 @@ export default function Home() {
     }
   }
 
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
   function onClear() {
-    if (!confirm('Clear all notes? This only affects this browser.')) return;
+    setShowClearConfirm(true);
+  }
+
+  function confirmClear() {
     setNotes([]);
     setDraft('');
     setQuery('');
     setStatus('Cleared.');
+    setShowClearConfirm(false);
+  }
+
+  function cancelClear() {
+    setShowClearConfirm(false);
   }
 
   async function runSearch() {
@@ -217,6 +227,24 @@ export default function Home() {
           </button>
         </div>
       </div>
+
+      {showClearConfirm ? (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
+          <div className="text-sm font-medium text-red-900">Clear all notes?</div>
+          <div className="mt-1 text-sm text-red-800">This only affects this browser (localStorage).</div>
+          <div className="mt-3 flex gap-2">
+            <button
+              className="rounded-md bg-red-600 px-3 py-2 text-sm text-white"
+              onClick={confirmClear}
+            >
+              Yes, clear
+            </button>
+            <button className="rounded-md border px-3 py-2 text-sm" onClick={cancelClear}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {status ? <div className="mb-4 text-sm text-neutral-700">{status}</div> : null}
 
