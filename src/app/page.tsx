@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-type Embedder = (text: string, opts: { pooling: 'mean'; normalize: boolean }) => Promise<{ data: Float32Array | number[] }>;
+type Embedder = (
+  text: string,
+  opts: { pooling: 'mean'; normalize: boolean }
+) => Promise<unknown>;
 
 type Note = {
   id: string;
@@ -69,8 +72,37 @@ export default function Home() {
   async function embed(text: string): Promise<number[]> {
     const embedder = (await getEmbedder()) as Embedder;
     const output = await embedder(text, { pooling: 'mean', normalize: true });
-    // output is a Tensor-like; `.data` is a typed array
-    return Array.from(output.data as Float32Array);
+
+    // transformers.js output shapes can vary between versions/builds.
+    // We accept a few common forms:
+    // - Tensor-like: { data: Float32Array }
+    // - Tensor-like with tolist(): number[][]
+    // - Raw arrays: number[] | number[][]
+
+    if (output == null) throw new Error('Embedding model returned no output');
+
+    // Array outputs
+    if (Array.isArray(output)) {
+      const first = output[0] as unknown;
+      if (typeof first === 'number') return output as number[];
+      if (Array.isArray(first) && typeof first[0] === 'number') return first as number[];
+      // Sometimes: [{ data: ... }]
+      const maybeObj = first as { data?: unknown };
+      if (maybeObj.data && maybeObj.data instanceof Float32Array) return Array.from(maybeObj.data);
+      if (maybeObj.data && Array.isArray(maybeObj.data) && typeof maybeObj.data[0] === 'number') return maybeObj.data as number[];
+    }
+
+    const outObj = output as { data?: unknown; tolist?: () => Promise<unknown> };
+    if (outObj.data && outObj.data instanceof Float32Array) return Array.from(outObj.data);
+    if (outObj.data && Array.isArray(outObj.data) && typeof outObj.data[0] === 'number') return outObj.data as number[];
+
+    if (typeof outObj.tolist === 'function') {
+      const arr = await outObj.tolist();
+      if (Array.isArray(arr) && typeof arr[0] === 'number') return arr as number[];
+      if (Array.isArray(arr) && Array.isArray(arr[0]) && typeof arr[0][0] === 'number') return arr[0] as number[];
+    }
+
+    throw new Error('Unexpected embedding output shape');
   }
 
   async function onAddNote() {
