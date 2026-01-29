@@ -1,11 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-
-type Embedder = (
-  text: string,
-  opts: { pooling: 'mean'; normalize: boolean }
-) => Promise<unknown>;
+import { useEffect, useState } from 'react';
 
 type Note = {
   id: string;
@@ -35,8 +30,6 @@ export default function Home() {
   const [status, setStatus] = useState<string>('');
   const [busy, setBusy] = useState(false);
 
-  const embedderRef = useRef<unknown>(null);
-
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -56,53 +49,28 @@ export default function Home() {
     }
   }, [notes]);
 
-  async function getEmbedder(): Promise<unknown> {
-    if (embedderRef.current) return embedderRef.current;
-    setStatus('Loading local embedding model (first run can take ~10–30s)…');
-    const { pipeline } = await import('@xenova/transformers');
-    // Small, fast model for client-side embeddings.
-    // NOTE: This downloads model weights into the browser cache.
-    embedderRef.current = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-      quantized: true,
-    });
-    setStatus('Embedding model ready.');
-    return embedderRef.current;
-  }
-
   async function embed(text: string): Promise<number[]> {
-    const embedder = (await getEmbedder()) as Embedder;
-    const output = await embedder(text, { pooling: 'mean', normalize: true });
+    const res = await fetch('/api/embed', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
 
-    // transformers.js output shapes can vary between versions/builds.
-    // We accept a few common forms:
-    // - Tensor-like: { data: Float32Array }
-    // - Tensor-like with tolist(): number[][]
-    // - Raw arrays: number[] | number[][]
-
-    if (output == null) throw new Error('Embedding model returned no output');
-
-    // Array outputs
-    if (Array.isArray(output)) {
-      const first = output[0] as unknown;
-      if (typeof first === 'number') return output as number[];
-      if (Array.isArray(first) && typeof first[0] === 'number') return first as number[];
-      // Sometimes: [{ data: ... }]
-      const maybeObj = first as { data?: unknown };
-      if (maybeObj.data && maybeObj.data instanceof Float32Array) return Array.from(maybeObj.data);
-      if (maybeObj.data && Array.isArray(maybeObj.data) && typeof maybeObj.data[0] === 'number') return maybeObj.data as number[];
+    if (!res.ok) {
+      let errText = `HTTP ${res.status}`;
+      try {
+        const data = (await res.json()) as { error?: string; stack?: string };
+        errText = data.error ?? errText;
+        if (data.stack) console.error(data.stack);
+      } catch {
+        // ignore
+      }
+      throw new Error(errText);
     }
 
-    const outObj = output as { data?: unknown; tolist?: () => Promise<unknown> };
-    if (outObj.data && outObj.data instanceof Float32Array) return Array.from(outObj.data);
-    if (outObj.data && Array.isArray(outObj.data) && typeof outObj.data[0] === 'number') return outObj.data as number[];
-
-    if (typeof outObj.tolist === 'function') {
-      const arr = await outObj.tolist();
-      if (Array.isArray(arr) && typeof arr[0] === 'number') return arr as number[];
-      if (Array.isArray(arr) && Array.isArray(arr[0]) && typeof arr[0][0] === 'number') return arr[0] as number[];
-    }
-
-    throw new Error('Unexpected embedding output shape');
+    const data = (await res.json()) as { embedding: number[] };
+    if (!data?.embedding?.length) throw new Error('Empty embedding returned');
+    return data.embedding;
   }
 
   async function onAddNote() {
@@ -132,7 +100,6 @@ export default function Home() {
     if (!notes.length) return;
     setBusy(true);
     try {
-      await getEmbedder();
       setStatus(`Re-embedding ${notes.length} notes…`);
       const updated: Note[] = [];
       for (const n of notes) {
